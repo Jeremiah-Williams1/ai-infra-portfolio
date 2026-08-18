@@ -216,3 +216,23 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# conda
+*/venv/
+*.conda/
+__pycache__/
+
+# secrets
+.env
+*.pem
+*.csv
+
+# model weights (large files — we'll handle via S3/artifact storage, not git)
+*.h5
+*.pt
+*.onnx
+*.pb
+models/*.weights
+
+# OS
+.DS_Store
