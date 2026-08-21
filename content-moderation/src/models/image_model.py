@@ -1,38 +1,28 @@
 import numpy as np
 from PIL import Image
-import tensorflow as tf
 import io
-
-MODEL_PATH = "models/nsfw_mobilenet.h5"
-IMAGE_SIZE = (224, 224)
-
-# Model's output classes, in the order the model was trained to output them
-CLASS_NAMES = ["drawings", "hentai", "neutral", "porn", "sexy"]
-UNSAFE_CLASSES = {"hentai", "porn", "sexy"}
+import opennsfw2 as n2
 
 _model = None
 
 def load_model():
     global _model
     if _model is None:
-        _model = tf.keras.models.load_model(MODEL_PATH)
+        # Downloads weights to ~/.opennsfw2/weights/ on first call, reused after
+        _model = n2.make_open_nsfw_model()
     return _model
-
-def preprocess(image_bytes: bytes) -> np.ndarray:
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    img = img.resize(IMAGE_SIZE)
-    arr = np.array(img) / 255.0
-    return np.expand_dims(arr, axis=0)
 
 def predict(image_bytes: bytes) -> dict:
     model = load_model()
-    x = preprocess(image_bytes)
-    preds = model.predict(x, verbose=0)[0]
 
-    scores = {name: float(score) for name, score in zip(CLASS_NAMES, preds)}
-    unsafe_score = sum(scores[c] for c in UNSAFE_CLASSES)
+    pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    preprocessed = n2.preprocess_image(pil_image, n2.Preprocessing.YAHOO)
+    x = np.expand_dims(preprocessed, axis=0)
+
+    predictions = model.predict(x, verbose=0)
+    non_nsfw_prob, nsfw_prob = predictions[0]
 
     return {
-        "scores": scores,
-        "unsafe_score": unsafe_score,
+        "scores": {"safe": float(non_nsfw_prob), "nsfw": float(nsfw_prob)},
+        "unsafe_score": float(nsfw_prob),
     }
