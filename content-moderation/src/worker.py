@@ -1,13 +1,27 @@
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import time
 import json
+import subprocess
 import traceback
 from datetime import datetime, timezone
 
 from . import config
 from .storage_client import download_file, upload_result
 from .queue_client import poll_jobs, delete_job
-from .models import image_model, text_model
+from .models import image_model
 from .decision import evaluate
+
+
+def predict_text_isolated(text: str) -> dict:
+    result = subprocess.run(
+        ["python", "-m", "src.models.text_model_runner", text],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"text_model subprocess failed: {result.stderr}")
+    return json.loads(result.stdout.strip())
 
 
 def process_job(job: dict) -> dict:
@@ -18,7 +32,7 @@ def process_job(job: dict) -> dict:
     image_bytes = download_file(s3_key)
     image_result = image_model.predict(image_bytes)
 
-    text_result = text_model.predict(caption) if caption.strip() else None
+    text_result = predict_text_isolated(caption) if caption.strip() else None
 
     result = evaluate(image_result, text_result)
     result["job_id"] = job_id
@@ -30,16 +44,15 @@ def process_job(job: dict) -> dict:
 def run():
     print("Worker started, polling for jobs...")
 
-    # Load models once at startup, not per-job
     image_model.load_model()
-    text_model.load_model()
-    print("Models loaded. Ready.")
+    print("Image model loaded. Ready.")
+    # text_model loads inside its own subprocess, per call -- not preloaded here
 
     while True:
         messages = poll_jobs()
 
         if not messages:
-            continue  # long polling already waited; loop straight back around
+            continue
 
         for message in messages:
             receipt_handle = message["ReceiptHandle"]
@@ -54,10 +67,6 @@ def run():
                 print(f"Job {job['job_id']} done -> {result['final_decision']}")
 
             except Exception as e:
-                # Don't delete the message -> it becomes visible again after
-                # the visibility timeout and gets retried. After enough
-                # retries, SQS redrive policy moves it to the DLQ (set on
-                # the queue itself, not here).
                 print(f"Job failed: {e}")
                 traceback.print_exc()
 
