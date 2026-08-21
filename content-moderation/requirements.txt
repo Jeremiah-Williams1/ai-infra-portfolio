@@ -8,3 +8,4 @@ pydantic
 transformers
 torch
 python-dotenv
+slowapi

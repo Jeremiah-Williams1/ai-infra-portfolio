@@ -1,20 +1,27 @@
 import uuid
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from . import config
 from .storage_client import upload_file, get_result
 from .queue_client import send_job
 
+limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(title="Content Moderation API")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 @app.post("/moderate")
+@limiter.limit("10/minute")
 async def moderate(
+    request: Request,
     file: UploadFile = File(...),
     caption: str = Form(default=""),
 ):
-    # --- Abuse-resistance: validate before doing any real work ---
     if file.content_type not in config.ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported file type")
 
@@ -23,12 +30,10 @@ async def moderate(
     if size_mb > config.MAX_FILE_SIZE_MB:
         raise HTTPException(status_code=413, detail="File too large")
 
-    # --- Store the raw upload in S3 ---
     job_id = str(uuid.uuid4())
     s3_key = f"uploads/{job_id}"
     upload_file(file_bytes, s3_key, file.content_type)
 
-    # --- Queue the job for the worker ---
     job = {
         "job_id": job_id,
         "s3_key": s3_key,
@@ -36,21 +41,21 @@ async def moderate(
     }
     send_job(job)
 
-    # --- Respond immediately, don't wait on inference ---
     return {
         "job_id": job_id,
         "status": "queued",
     }
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
 @app.get("/status/{job_id}")
-def get_status(job_id: str):
+@limiter.limit("30/minute")
+def get_status(request: Request, job_id: str):
     result = get_result(job_id)
     if result is None:
         return {"job_id": job_id, "status": "processing"}
     return {"job_id": job_id, "status": "done", "result": result}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
