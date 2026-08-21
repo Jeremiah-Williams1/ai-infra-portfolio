@@ -1,3 +1,6 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = ""  # hide GPU from torch entirely, must be set before torch import
+
 from transformers import pipeline
 
 MODEL_NAME = "unitary/toxic-bert"
@@ -10,8 +13,8 @@ def load_model():
         _classifier = pipeline(
             "text-classification",
             model=MODEL_NAME,
-            device=-1,  # -1 forces CPU, keeps this off the GPU entirely
-            top_k=None, # return scores for all labels, not just the top one
+            device=-1,
+            top_k=None,
         )
     return _classifier
 
@@ -20,7 +23,7 @@ def predict(text: str) -> dict:
         return {"scores": {}, "toxic_score": 0.0}
 
     classifier = load_model()
-    results = classifier(text)[0]  # list of {"label": ..., "score": ...}
+    results = classifier(text)[0]
 
     scores = {r["label"]: float(r["score"]) for r in results}
     toxic_score = scores.get("toxic", 0.0)
