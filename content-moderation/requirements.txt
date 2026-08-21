@@ -5,3 +5,6 @@ tensorflow
 pillow
 python-multipart
 pydantic
+transformers
+torch
+python-dotenv
